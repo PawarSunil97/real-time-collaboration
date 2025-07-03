@@ -4,8 +4,11 @@ import {
   Container,
   Nav,
   Button,
+  OverlayTrigger,
+  Tooltip
 } from "react-bootstrap";
 import { useAuth } from "../context/AuthContext";
+
 import { useNavigate, useParams } from "react-router-dom";
 import { useBoardUsers } from "../hook/useBoardUsers";
 import { NAVBAR } from "../appConstant";
@@ -13,18 +16,20 @@ import Avatar from "./Avatar";
 import { BoardUser } from "../types/type";
 import { onValue, ref } from "firebase/database";
 import { database } from "../firebase/firebaseConfig";
-
+import { FiShare2, FiLogOut } from "react-icons/fi";
 interface NavbarProps {
   onLogout: () => void;
+  onInvite: () => void;
+  userPermission?: string;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
+const Navbar: React.FC<NavbarProps> = ({ onLogout, onInvite,userPermission }) => {
   const { user, loading } = useAuth();
-  const { boardId } = useParams<{ boardId: string }>();
-  const users = useBoardUsers(boardId || "default");
-  const onlineUsers = Object.values(users || {}).filter(u => u.online);
   
 
+  const { boardId } = useParams<{ boardId: string }>();
+  const users = useBoardUsers(boardId || "default");
+  const onlineUsers = Object.values(users || {}).filter((u) => u.online);
 
   const [boardTitle, setBoardTitle] = useState<string>("");
   const navigate = useNavigate();
@@ -34,11 +39,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
       const boardRef = ref(database, `boards/${boardId}`);
       const unsub = onValue(boardRef, (snap) => {
         const data = snap.val();
-        if (data && data.title) {
-          setBoardTitle(data.title);
-        } else {
-          setBoardTitle("");
-        }
+        setBoardTitle(data?.title || "");
       });
       return () => unsub();
     } else {
@@ -61,7 +62,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
       <Container fluid>
         <BootstrapNavbar.Brand
           style={{ cursor: "pointer" }}
-          className="fw-bold fs-4 pointer"
+          className="fw-bold fs-4"
           onClick={handleTitleClick}
         >
           {boardId ? boardTitle : "Dashboard"}
@@ -73,7 +74,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
           className="justify-content-end"
         >
           <Nav className="align-items-center">
-            {/* ✅ If on a board: show online count + avatars */}
+            {/* ✅ Online count and avatars on board */}
             {boardId && (
               <>
                 <span className="d-flex align-items-center me-3">
@@ -93,7 +94,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
               </>
             )}
 
-            {/* ✅ If on dashboard: show only owner avatar & name */}
+            {/* ✅ Avatar and name on Dashboard */}
             {!boardId && !loading && user && (
               <div className="d-flex align-items-center me-3">
                 <Avatar
@@ -110,11 +111,32 @@ const Navbar: React.FC<NavbarProps> = ({ onLogout }) => {
               </div>
             )}
 
-            {/* Logout Button */}
-            <Button variant="danger" onClick={onLogout} className="me-2">
-              <i className="bi bi-box-arrow-right me-2"></i>
-              {NAVBAR.LOGOUT_LABEL}
-            </Button>
+            {/* ✅ Share Board Button */}
+           {boardId && userPermission !== "view" && userPermission !== "none" && (
+  <OverlayTrigger
+    placement="bottom"
+    overlay={<Tooltip id="tooltip-share">Copy share link</Tooltip>}
+  >
+    <Button
+      variant="primary"
+      onClick={onInvite}
+      className="d-flex align-items-center justify-content-center m-2"
+    >
+      <FiShare2 />
+    </Button>
+  </OverlayTrigger>
+)}
+
+
+            {/* ✅ Logout Button */}
+             <OverlayTrigger
+              placement="bottom"
+              overlay={<Tooltip id="tooltip-logout">Logout</Tooltip>}
+            >
+              <Button variant="danger" onClick={onLogout} className="d-flex align-items-center justify-content-center m-2">
+                <FiLogOut />
+              </Button>
+            </OverlayTrigger>
           </Nav>
         </BootstrapNavbar.Collapse>
       </Container>

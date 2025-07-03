@@ -11,8 +11,13 @@ import { database } from "../firebase/firebaseConfig";
 import { useAuth } from "./AuthContext";
 import { v4 as uuid } from "uuid";
 
-
-export type ToolType = "note" | "rectangle" | "circle" | "line" | null;
+export type ToolType =
+  | "note"
+  | "rectangle"
+  | "circle"
+  | "line"
+  | "simpleText"
+  | null;
 
 export type NoteType = {
   id: string;
@@ -37,11 +42,22 @@ export type ShapeType = {
   text: string;
   createdBy: string;
 };
-
+export type SimpleTextType = {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  color: string;
+  createdBy: string;
+};
 // Individual operation types for undo/redo
 type Operation =
   | { type: "CREATE_NOTE"; data: NoteType }
   | { type: "CREATE_SHAPE"; data: ShapeType }
+  | { type: "CREATE_SIMPLE_TEXT"; data: SimpleTextType }
   | {
       type: "UPDATE_NOTE";
       id: string;
@@ -54,33 +70,48 @@ type Operation =
       oldData: Partial<ShapeType>;
       newData: Partial<ShapeType>;
     }
+  | {
+      type: "UPDATE_SIMPLE_TEXT";
+      id: string;
+      oldData: Partial<SimpleTextType>;
+      newData: Partial<SimpleTextType>;
+    }
   | { type: "DELETE_NOTE"; data: NoteType }
-  | { type: "DELETE_SHAPE"; data: ShapeType };
+  | { type: "DELETE_SHAPE"; data: ShapeType }
+  | { type: "DELETE_SIMPLE_TEXT"; data: SimpleTextType };
 
 interface BoardContextType {
   activeTool: ToolType;
   setActiveTool: (tool: ToolType) => void;
-
   selectedColor: string;
   setSelectedColor: (color: string) => void;
-
+  setActiveToolInternal: (tool: ToolType) => void;
   selectedElementId: string | null;
   setSelectedElementId: (id: string | null) => void;
-cursors: Record<string, any>;
-trackCursor: (x: number, y: number) => void;
+  cursors: Record<string, any>;
+  trackCursor: (x: number, y: number) => void;
   notes: NoteType[];
   shapes: ShapeType[];
-
+  simpleTexts: SimpleTextType[];
+  userPermission: "owner" | "edit" | "view" | "none";
+  // Optional: expose read-only helper
+  isReadOnly: boolean;
   // User names mapping
   userNames: Record<string, string>;
 
   // CRUD operations
   createNote: (x: number, y: number) => Promise<void>;
   createShape: (type: ShapeType["type"], x: number, y: number) => Promise<void>;
+  createSimpleText: (x: number, y: number) => Promise<void>;
   updateNote: (id: string, updates: Partial<NoteType>) => Promise<void>;
   updateShape: (id: string, updates: Partial<ShapeType>) => Promise<void>;
+  updateSimpleText: (
+    id: string,
+    updates: Partial<SimpleTextType>
+  ) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   deleteShape: (id: string) => Promise<void>;
+  deleteSimpleText: (id: string) => Promise<void>;
 
   undo: () => void;
   redo: () => void;
@@ -94,15 +125,18 @@ type CursorData = {
   color: string;
   lastActive: number;
 };
-
-
-
+interface BoardProviderProps {
+  children: React.ReactNode;
+  boardId: string;
+  userPermission: "owner" | "edit" | "view" | "none";
+}
 const BoardContext = createContext<BoardContextType | undefined>(undefined);
 
-export const BoardProvider: React.FC<{
-  boardId: string;
-  children: React.ReactNode;
-}> = ({ boardId, children }) => {
+export const BoardProvider: React.FC<BoardProviderProps> = ({
+  children,
+  boardId,
+  userPermission,
+}) => {
   const { user } = useAuth();
   const [activeTool, setActiveTool] = useState<ToolType>(null);
   const [selectedColor, setSelectedColor] = useState<string>("#FFEB3B");
@@ -112,6 +146,8 @@ export const BoardProvider: React.FC<{
 
   const [notes, setNotes] = useState<NoteType[]>([]);
   const [shapes, setShapes] = useState<ShapeType[]>([]);
+  const [simpleTexts, setSimpleTexts] = useState<SimpleTextType[]>([]);
+
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   // Individual operation stacks for undo/redo
@@ -119,10 +155,9 @@ export const BoardProvider: React.FC<{
   const [redoStack, setRedoStack] = useState<Operation[]>([]);
   const [cursors, setCursors] = useState<{ [uid: string]: CursorData }>({});
 
-
-
   // Track if we're in the middle of an undo/redo operation
   const isUndoRedoOperation = useRef(false);
+  const isReadOnly = userPermission === "view";
 
   // Function to fetch user names
   const fetchUserNames = useCallback(
@@ -183,56 +218,52 @@ export const BoardProvider: React.FC<{
   );
 
   // firebase liestner
-useEffect(() => {
-  if (!boardId) return;
+  useEffect(() => {
+    if (!boardId) return;
 
-  const cursorsRef = ref(database, `boards/${boardId}/cursors`);
-  const unsubscribe = onValue(cursorsRef, (snapshot) => {
-    const raw = snapshot.val() || {};
-    const now = Date.now();
+    const cursorsRef = ref(database, `boards/${boardId}/cursors`);
+    const unsubscribe = onValue(cursorsRef, (snapshot) => {
+      const raw = snapshot.val() || {};
+      const now = Date.now();
 
-    const filtered: { [uid: string]: CursorData } = {};
-    Object.entries(raw).forEach(([uid, data]) => {
-      // Type guard: check that data is an object and has expected fields
-      if (
-        typeof data === "object" &&
-        data !== null &&
-        "x" in data &&
-        "y" in data &&
-        "lastActive" in data &&
-        typeof (data as any).lastActive === "number"
-      ) {
-        const cursor = data as CursorData;
+      const filtered: { [uid: string]: CursorData } = {};
+      Object.entries(raw).forEach(([uid, data]) => {
+        // Type guard: check that data is an object and has expected fields
+        if (
+          typeof data === "object" &&
+          data !== null &&
+          "x" in data &&
+          "y" in data &&
+          "lastActive" in data &&
+          typeof (data as any).lastActive === "number"
+        ) {
+          const cursor = data as CursorData;
 
-        // Only include if active in last 30 seconds
-        if (now - cursor.lastActive < 30000) {
-          filtered[uid] = cursor;
+          // Only include if active in last 30 seconds
+          if (now - cursor.lastActive < 30000) {
+            filtered[uid] = cursor;
+          }
         }
-      }
+      });
+
+      setCursors(filtered);
     });
 
-    setCursors(filtered);
-  });
+    return () => off(cursorsRef, "value", unsubscribe);
+  }, [boardId]);
 
-  return () => off(cursorsRef, "value", unsubscribe);
-}, [boardId]);
+  const trackCursor = (x: number, y: number) => {
+    if (!user || !boardId) return;
 
-const trackCursor = (x: number, y: number) => {
-  if (!user || !boardId) return;
-
-  const cursorRef = ref(database, `boards/${boardId}/cursors/${user.uid}`);
-  set(cursorRef, {
-    x,
-    y,
-    displayName: user.displayName || user.email || "User",
-    color: "#007bff",
-    lastActive: Date.now(),
-  });
-};
-
-
-
-
+    const cursorRef = ref(database, `boards/${boardId}/cursors/${user.uid}`);
+    set(cursorRef, {
+      x,
+      y,
+      displayName: user.displayName || user.email || "User",
+      color: "#007bff",
+      lastActive: Date.now(),
+    });
+  };
 
   // Firebase listeners
   useEffect(() => {
@@ -240,6 +271,7 @@ const trackCursor = (x: number, y: number) => {
 
     const notesRef = ref(database, `boards/${boardId}/notes`);
     const shapesRef = ref(database, `boards/${boardId}/shapes`);
+    const simpleTextRef = ref(database, `boards/${boardId}/simpleTexts`);
 
     const unsubNotes = onValue(
       notesRef,
@@ -302,10 +334,33 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error loading shapes:", error);
       }
     );
-
+    const unsubSimpleText = onValue(
+      simpleTextRef,
+      (snapshot) => {
+        const data = snapshot.val();
+        const loaded: SimpleTextType[] = data
+          ? Object.entries(data).map(([key, val]: [string, any]) => ({
+              id: key,
+              text: val.text || "",
+              x: val.x || 0,
+              y: val.y || 0,
+              width: val.width || 200,
+              height: val.height || 50,
+              rotation: val.rotation || 0,
+              createdBy: val.createdBy || "",
+              color: val.color || "#000",
+            }))
+          : [];
+        setSimpleTexts(loaded);
+      },
+      (error) => {
+        console.error("Error loading simpleTexts:", error);
+      }
+    );
     return () => {
       unsubNotes();
       unsubShapes();
+      unsubSimpleText();
     };
   }, [boardId, fetchUserNames]);
 
@@ -329,7 +384,7 @@ const trackCursor = (x: number, y: number) => {
   // CRUD Operations with undo tracking
   const createNote = useCallback(
     async (x: number, y: number) => {
-      if (!user || !boardId) return;
+      if (isReadOnly || !user || !boardId) return;
 
       const id = uuid();
       const newNote: NoteType = {
@@ -354,12 +409,12 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error creating note:", error);
       }
     },
-    [user, boardId, selectedColor, addToUndoStack]
+    [isReadOnly, user, boardId, selectedColor, addToUndoStack]
   );
 
   const createShape = useCallback(
     async (type: ShapeType["type"], x: number, y: number) => {
-      if (!user || !boardId) return;
+      if (isReadOnly || !user || !boardId) return;
 
       const id = uuid();
       const newShape: ShapeType = {
@@ -386,12 +441,44 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error creating shape:", error);
       }
     },
-    [user, boardId, selectedColor, addToUndoStack]
+    [isReadOnly, user, boardId, selectedColor, addToUndoStack]
+  );
+  const createSimpleText = useCallback(
+    async (x: number, y: number) => {
+      const defaultColor = "#000000";
+      if (isReadOnly || !user || !boardId) return;
+
+      const id = uuid();
+      const newText: SimpleTextType = {
+        id,
+        text: "",
+        x,
+        y,
+        width: 200,
+        height: 50,
+        color: selectedColor || defaultColor,
+        rotation: 0,
+        createdBy: user.uid, // ✅ required for Firebase rules
+      };
+
+      try {
+        await update(
+          ref(database, `boards/${boardId}/simpleTexts/${id}`),
+          newText // ✅ send full object
+        );
+
+        addToUndoStack({ type: "CREATE_SIMPLE_TEXT", data: newText });
+        setRedoStack([]);
+      } catch (error) {
+        console.error("Error creating simpleText:", error);
+      }
+    },
+    [isReadOnly, user, boardId, selectedColor, addToUndoStack]
   );
 
   const updateNote = useCallback(
     async (id: string, updates: Partial<NoteType>) => {
-      if (!boardId) return;
+      if (isReadOnly || !user || !boardId) return;
 
       // Get current note data for undo
       const currentNote = notes.find((n) => n.id === id);
@@ -423,13 +510,12 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error updating note:", error);
       }
     },
-    [boardId, notes, addToUndoStack]
+    [isReadOnly, boardId, notes, addToUndoStack]
   );
 
   const updateShape = useCallback(
     async (id: string, updates: Partial<ShapeType>) => {
-      if (!boardId) return;
-
+      if (isReadOnly || !user || !boardId) return;
       // Get current shape data for undo
       const currentShape = shapes.find((s) => s.id === id);
       if (!currentShape) return;
@@ -460,12 +546,45 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error updating shape:", error);
       }
     },
-    [boardId, shapes, addToUndoStack]
+    [isReadOnly, boardId, shapes, addToUndoStack]
   );
+  const updateSimpleText = useCallback(
+    async (id: string, updates: Partial<SimpleTextType>) => {
+      if (isReadOnly || !user || !boardId) return;
+      // Get current note data for undo
+      const currentText = simpleTexts.find((n) => n.id === id);
+      if (!currentText) return;
+      const oldData: Partial<SimpleTextType> = {};
+      Object.keys(updates).forEach((key) => {
+        const typedKey = key as keyof SimpleTextType;
+        (oldData as any)[typedKey] = currentText[typedKey];
+      });
+      try {
+        await update(
+          ref(database, `boards/${boardId}/simpleTexts/${id}`),
+          updates
+        );
 
+        setUndoStack((prev) => [
+          ...prev,
+          {
+            type: "UPDATE_SIMPLE_TEXT",
+            id,
+            oldData,
+            newData: updates,
+          },
+        ]);
+
+        setRedoStack([]);
+      } catch (error) {
+        console.error("Error updating simpleText:", error);
+      }
+    },
+    [isReadOnly, boardId, simpleTexts, addToUndoStack]
+  );
   const deleteNote = useCallback(
     async (id: string) => {
-      if (!boardId) return;
+      if (isReadOnly || !user || !boardId) return;
 
       // Get note data for undo
       const noteToDelete = notes.find((n) => n.id === id);
@@ -481,12 +600,12 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error deleting note:", error);
       }
     },
-    [boardId, notes, addToUndoStack]
+    [isReadOnly, boardId, notes, addToUndoStack]
   );
 
   const deleteShape = useCallback(
     async (id: string) => {
-      if (!boardId) return;
+      if (isReadOnly || !user || !boardId) return;
 
       // Get shape data for undo
       const shapeToDelete = shapes.find((s) => s.id === id);
@@ -502,12 +621,30 @@ const trackCursor = (x: number, y: number) => {
         console.error("Error deleting shape:", error);
       }
     },
-    [boardId, shapes, addToUndoStack]
+    [isReadOnly, boardId, shapes, addToUndoStack]
   );
+  const deleteSimpleText = useCallback(
+    async (id: string) => {
+      if (isReadOnly || !user || !boardId) return;
+      const simpleTextToDelete = simpleTexts.find((n) => n.id === id);
+      if (!simpleTextToDelete) return;
+      try {
+        await remove(ref(database, `boards/${boardId}/simpleTexts/${id}`));
 
+        addToUndoStack({
+          type: "DELETE_SIMPLE_TEXT",
+          data: simpleTextToDelete,
+        });
+        setRedoStack([]);
+      } catch (error) {
+        console.error("Error deleting simpleText:", error);
+      }
+    },
+    [isReadOnly, boardId, simpleTexts, addToUndoStack]
+  );
   // Undo/Redo operations
   const undo = useCallback(async () => {
-    if (undoStack.length === 0 || !boardId) return;
+    if (isReadOnly || !user || undoStack.length === 0 || !boardId) return;
 
     const lastOperation = undoStack[undoStack.length - 1];
     isUndoRedoOperation.current = true;
@@ -525,6 +662,14 @@ const trackCursor = (x: number, y: number) => {
             ref(database, `boards/${boardId}/shapes/${lastOperation.data.id}`)
           );
           break;
+        case "CREATE_SIMPLE_TEXT":
+          await remove(
+            ref(
+              database,
+              `boards/${boardId}/simpleTexts/${lastOperation.data.id}`
+            )
+          );
+          break;
 
         case "UPDATE_NOTE":
           await update(
@@ -538,6 +683,13 @@ const trackCursor = (x: number, y: number) => {
             ref(database, `boards/${boardId}/shapes/${lastOperation.id}`),
             lastOperation.oldData
           );
+          break;
+        case "UPDATE_SIMPLE_TEXT":
+          await update(
+            ref(database, `boards/${boardId}/simpleTexts/${lastOperation.id}`),
+            lastOperation.oldData
+          );
+
           break;
 
         case "DELETE_NOTE":
@@ -553,6 +705,15 @@ const trackCursor = (x: number, y: number) => {
             lastOperation.data
           );
           break;
+        case "DELETE_SIMPLE_TEXT":
+          await set(
+            ref(
+              database,
+              `boards/${boardId}/simpleTexts/${lastOperation.data.id}`
+            ),
+            lastOperation.data
+          );
+          break;
       }
 
       setUndoStack((prev) => prev.slice(0, -1)); // Remove last item
@@ -564,10 +725,25 @@ const trackCursor = (x: number, y: number) => {
         isUndoRedoOperation.current = false;
       }, 100);
     }
-  }, [undoStack, boardId]);
+  }, [isReadOnly, undoStack, boardId]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Z
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        undo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [undo]);
 
   const redo = useCallback(async () => {
-    if (redoStack.length === 0 || !boardId) return;
+    if (isReadOnly || !user || redoStack.length === 0 || !boardId) return;
 
     const operationToRedo = redoStack[0];
     isUndoRedoOperation.current = true;
@@ -590,6 +766,15 @@ const trackCursor = (x: number, y: number) => {
             operationToRedo.data
           );
           break;
+        case "CREATE_SIMPLE_TEXT":
+          await set(
+            ref(
+              database,
+              `boards/${boardId}/simpleTexts/${operationToRedo.data.id}`
+            ),
+            operationToRedo.data
+          );
+          break;
 
         case "UPDATE_NOTE":
           await update(
@@ -604,7 +789,15 @@ const trackCursor = (x: number, y: number) => {
             operationToRedo.newData
           );
           break;
-
+        case "UPDATE_SIMPLE_TEXT":
+          await update(
+            ref(
+              database,
+              `boards/${boardId}/simpleTexts/${operationToRedo.id}`
+            ),
+            operationToRedo.newData
+          );
+          break;
         case "DELETE_NOTE":
           await remove(
             ref(database, `boards/${boardId}/notes/${operationToRedo.data.id}`)
@@ -614,6 +807,14 @@ const trackCursor = (x: number, y: number) => {
         case "DELETE_SHAPE":
           await remove(
             ref(database, `boards/${boardId}/shapes/${operationToRedo.data.id}`)
+          );
+          break;
+        case "DELETE_SIMPLE_TEXT":
+          await remove(
+            ref(
+              database,
+              `boards/${boardId}/simpleTexts/${operationToRedo.data.id}`
+            )
           );
           break;
       }
@@ -628,30 +829,53 @@ const trackCursor = (x: number, y: number) => {
       }, 100);
     }
   }, [redoStack, boardId]);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Z
+      if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
 
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [redo]);
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
-
+  const setActiveToolInternal = (tool: ToolType) => {
+    if (userPermission === "view") return;
+    setActiveTool(tool);
+  };
   return (
     <BoardContext.Provider
       value={{
         activeTool,
         setActiveTool,
+        setActiveToolInternal,
+        userPermission,
+        isReadOnly,
         selectedColor,
         setSelectedColor,
         selectedElementId,
         setSelectedElementId,
         notes,
         shapes,
+        simpleTexts,
         userNames,
         createNote,
         cursors,
         trackCursor,
         createShape,
+        createSimpleText,
         updateNote,
         updateShape,
+        updateSimpleText,
         deleteNote,
         deleteShape,
+        deleteSimpleText,
         undo,
         redo,
         canUndo,

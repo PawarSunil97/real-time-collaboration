@@ -1,12 +1,12 @@
-// BoardsTable.tsx
 import React from "react";
-import { Table, Button } from "react-bootstrap";
+import { Table } from "react-bootstrap";
 
 interface Board {
   boardId: string;
   title: string;
   createdAt: number;
   invitedFrom?: string;
+  ownerName?: string;
 }
 
 interface Props {
@@ -26,13 +26,12 @@ const BoardsTable: React.FC<Props> = ({
 }) => {
   return (
     <Table hover responsive>
-      <thead>
+      <thead style={{ position: "sticky", top: 0, backgroundColor: "#fff", zIndex: 1 }}>
         <tr>
           <th>Name</th>
           <th>Online users</th>
           <th>Created</th>
           <th>Owner</th>
-          {/* <th>Actions</th> */}
         </tr>
       </thead>
       <tbody>
@@ -44,25 +43,11 @@ const BoardsTable: React.FC<Props> = ({
             >
               📁 <strong>{board.title || board.boardId}</strong>
               <br />
-              <small>
-                Created {new Date(board.createdAt).toLocaleDateString()}
-              </small>
+              <small>Created {new Date(board.createdAt).toLocaleDateString()}</small>
             </td>
             <td>{onlineCounts[board.boardId] || 0}</td>
             <td>{new Date(board.createdAt).toLocaleDateString()}</td>
-            <td>{board.invitedFrom || user?.displayName || "You"}</td>
-            {/* <td>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(board.boardId);
-                }}
-              >
-                Delete
-              </Button>
-            </td> */}
+            <td>{board.ownerName || "Unknown"}</td>
           </tr>
         ))}
       </tbody>

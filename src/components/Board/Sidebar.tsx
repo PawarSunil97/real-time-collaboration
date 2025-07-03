@@ -1,7 +1,5 @@
 import React, { useState } from "react";
 import { useBoard } from "../../context/BoardContext";
-import { useAuth } from "../../context/AuthContext";
-import { useParams } from "react-router-dom";
 import {
   PiNoteBold,
   PiSquareBold,
@@ -11,9 +9,11 @@ import {
   PiArrowBendUpRightBold,
   PiPaletteBold,
 } from "react-icons/pi";
+import { CiText } from "react-icons/ci";
 import { Button, OverlayTrigger, Tooltip } from "react-bootstrap";
 
 const colors = [
+  "#000000",
   "#ffc107",
   "#f28b82",
   "#ccff90",
@@ -23,25 +23,24 @@ const colors = [
 ];
 
 const Sidebar: React.FC = () => {
-  const { 
-    activeTool, 
-    setActiveTool, 
-    selectedColor, 
-    setSelectedColor, 
-    undo, 
+  const {
+    activeTool,
+    setActiveTool,
+    selectedColor,
+    setSelectedColor,
+    undo,
     redo,
     canUndo,
-    canRedo
+    canRedo,
+    isReadOnly,
   } = useBoard();
-  const { user } = useAuth();
-  const { boardId } = useParams<{ boardId: string }>();
 
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleToolClick = (
-    tool: "note" | "rectangle" | "circle" | "line"
+    tool: "note" | "rectangle" | "circle" | "line" | "simpleText"
   ) => {
-    if (!user || !boardId) return;
+    if (isReadOnly) return;
     setActiveTool(tool);
   };
 
@@ -52,29 +51,37 @@ const Sidebar: React.FC = () => {
         height: "100vh",
         width: "60px",
         borderRight: "1px solid #ddd",
-        margin:"5px",
-        borderRadius:"20px",
+        margin: "5px",
+        borderRadius: "20px",
         position: "sticky",
         top: 0,
         padding: "10px 0",
       }}
     >
-      {/* Tools + Undo/Redo */}
       <div className="d-flex flex-column align-items-center gap-3">
-        {/* Color Picker */}
-        <OverlayTrigger placement="right" overlay={<Tooltip>Color</Tooltip>}>
-          <Button
-            variant="light"
-            className="p-2 d-flex align-items-center justify-content-center"
-            style={{ borderRadius: "8px" }}
-            onClick={() => setShowColorPicker(!showColorPicker)}
-          >
-            <PiPaletteBold size={20} />
-          </Button>
+        {/* Color Picker Button */}
+        <OverlayTrigger
+          placement="right"
+          overlay={
+            <Tooltip>
+              {isReadOnly ? "View only: Cannot change color" : "Color"}
+            </Tooltip>
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              className="p-2"
+              onClick={() => setShowColorPicker(!showColorPicker)}
+              disabled={isReadOnly}
+            >
+              <PiPaletteBold size={20} />
+            </Button>
+          </span>
         </OverlayTrigger>
 
-        {/* Color Picker Dropdown */}
-        {showColorPicker && (
+        {/* Color Picker Panel */}
+        {showColorPicker && !isReadOnly && (
           <div
             className="position-absolute bg-white p-2 shadow rounded"
             style={{
@@ -109,81 +116,76 @@ const Sidebar: React.FC = () => {
           </div>
         )}
 
-        {/* Tools */}
-        <OverlayTrigger placement="right" overlay={<Tooltip>Note</Tooltip>}>
-          <Button
-            variant={activeTool === "note" ? "primary" : "light"}
-            className="p-2"
-            style={{ borderRadius: "8px" }}
-            onClick={() => handleToolClick("note")}
+        {/* Drawing Tools */}
+        {[
+          { icon: <PiNoteBold size={20} />, tool: "note", label: "Note" },
+          { icon: <PiSquareBold size={20} />, tool: "rectangle", label: "Rectangle" },
+          { icon: <PiCircleBold size={20} />, tool: "circle", label: "Circle" },
+          { icon: <PiPencilSimpleBold size={20} />, tool: "line", label: "Line" },
+          { icon: <CiText size={20} />, tool: "simpleText", label: "Text" },
+        ].map(({ icon, tool, label }) => (
+          <OverlayTrigger
+            key={tool}
+            placement="right"
+            overlay={
+              <Tooltip>
+                {isReadOnly ? `View only: Cannot use ${label}` : label}
+              </Tooltip>
+            }
           >
-            <PiNoteBold size={20} />
-          </Button>
-        </OverlayTrigger>
-
-        <OverlayTrigger placement="right" overlay={<Tooltip>Rectangle</Tooltip>}>
-          <Button
-            variant={activeTool === "rectangle" ? "primary" : "light"}
-            className="p-2"
-            style={{ borderRadius: "8px" }}
-            onClick={() => handleToolClick("rectangle")}
-          >
-            <PiSquareBold size={20} />
-          </Button>
-        </OverlayTrigger>
-
-        <OverlayTrigger placement="right" overlay={<Tooltip>Circle</Tooltip>}>
-          <Button
-            variant={activeTool === "circle" ? "primary" : "light"}
-            className="p-2"
-            style={{ borderRadius: "8px" }}
-            onClick={() => handleToolClick("circle")}
-          >
-            <PiCircleBold size={20} />
-          </Button>
-        </OverlayTrigger>
-
-        <OverlayTrigger placement="right" overlay={<Tooltip>Line</Tooltip>}>
-          <Button
-            variant={activeTool === "line" ? "primary" : "light"}
-            className="p-2"
-            style={{ borderRadius: "8px" }}
-            onClick={() => handleToolClick("line")}
-          >
-            <PiPencilSimpleBold size={20} />
-          </Button>
-        </OverlayTrigger>
+            <span>
+              <Button
+                variant={activeTool === tool ? "primary" : "light"}
+                className="p-2"
+                onClick={() => handleToolClick(tool as any)}
+                disabled={isReadOnly}
+              >
+                {icon}
+              </Button>
+            </span>
+          </OverlayTrigger>
+        ))}
 
         {/* Undo */}
-        <OverlayTrigger placement="right" overlay={<Tooltip>Undo</Tooltip>}>
-          <Button
-            variant="light"
-            className="p-2"
-            style={{ 
-              borderRadius: "8px",
-              opacity: canUndo ? 1 : 0.5
-            }}
-            onClick={undo}
-            disabled={!canUndo}
-          >
-            <PiArrowBendUpLeftBold size={20} />
-          </Button>
+        <OverlayTrigger
+          placement="right"
+          overlay={
+            <Tooltip>
+              {isReadOnly ? "View only: Undo disabled" : "Undo"}
+            </Tooltip>
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              className="p-2"
+              onClick={undo}
+              disabled={!canUndo || isReadOnly}
+            >
+              <PiArrowBendUpLeftBold size={20} />
+            </Button>
+          </span>
         </OverlayTrigger>
 
         {/* Redo */}
-        <OverlayTrigger placement="right" overlay={<Tooltip>Redo</Tooltip>}>
-          <Button
-            variant="light"
-            className="p-2"
-            style={{ 
-              borderRadius: "8px",
-              opacity: canRedo ? 1 : 0.5
-            }}
-            onClick={redo}
-            disabled={!canRedo}
-          >
-            <PiArrowBendUpRightBold size={20} />
-          </Button>
+        <OverlayTrigger
+          placement="right"
+          overlay={
+            <Tooltip>
+              {isReadOnly ? "View only: Redo disabled" : "Redo"}
+            </Tooltip>
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              className="p-2"
+              onClick={redo}
+              disabled={!canRedo || isReadOnly}
+            >
+              <PiArrowBendUpRightBold size={20} />
+            </Button>
+          </span>
         </OverlayTrigger>
       </div>
     </div>

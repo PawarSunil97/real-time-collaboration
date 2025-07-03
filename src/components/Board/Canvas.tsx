@@ -1,55 +1,80 @@
+// Updated Canvas.tsx with improved touch support for text input
 import React, { useState, useEffect, useRef } from "react";
 import Note from "./Note";
 import Shape from "./Shape";
 import { useAuth } from "../../context/AuthContext";
 import { useBoard } from "../../context/BoardContext";
-import { database } from "../../firebase/firebaseConfig";
-import { ref, set } from "firebase/database";
+import SimpleText from "./SimpleText";
 
 interface CanvasProps {
   boardId: string;
-  onInvite: () => void; 
 }
 
-const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
+const Canvas: React.FC<CanvasProps> = ({ boardId }) => {
   const { user } = useAuth();
   const {
     activeTool,
+    setActiveTool,
     selectedColor,
     notes,
     shapes,
     userNames,
     createNote,
     createShape,
+    createSimpleText,
+    simpleTexts,
     cursors,
     trackCursor,
     updateNote,
     updateShape,
+    updateSimpleText,
     deleteNote,
     deleteShape,
+    deleteSimpleText,
+     userPermission,
   } = useBoard();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [scale, setScale] = useState(1);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  // cursor pointer indicator
+const isReadOnly = userPermission === "view" || userPermission === "none";
+  const getTouchOrMouseCoords = (
+    clientX: number,
+    clientY: number
+  ): { x: number; y: number } => {
+    const container = scrollContainerRef.current;
+    if (!container) return { x: 0, y: 0 };
+
+    const rect = container.getBoundingClientRect();
+    const scrollX = container.scrollLeft;
+    const scrollY = container.scrollTop;
+
+    const x = (clientX - rect.left + scrollX) / scale;
+    const y = (clientY - rect.top + scrollY) / scale;
+
+    return { x, y };
+  };
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      const container = scrollContainerRef.current;
-      if (!container) return;
+      const { x, y } = getTouchOrMouseCoords(e.clientX, e.clientY);
+      trackCursor(x, y);
+    };
 
-      const rect = container.getBoundingClientRect();
-      const scrollX = container.scrollLeft;
-      const scrollY = container.scrollTop;
-
-      const x = (e.clientX - rect.left + scrollX) / scale;
-      const y = (e.clientY - rect.top + scrollY) / scale;
-
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      const { x, y } = getTouchOrMouseCoords(touch.clientX, touch.clientY);
       trackCursor(x, y);
     };
 
     window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("touchmove", handleTouchMove);
+    };
   }, [trackCursor, scale]);
 
   useEffect(() => {
@@ -58,7 +83,7 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
 
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey) {
-        e.preventDefault(); // Prevent zoom scroll
+        e.preventDefault();
       }
     };
 
@@ -77,24 +102,81 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
     }
   };
 
-  const handleCanvasClick = async (e: React.MouseEvent) => {
+  // Check if the target is an interactive element
+  const isInteractiveElement = (target: HTMLElement): boolean => {
+    const interactiveTags = ["TEXTAREA", "INPUT", "BUTTON", "SELECT"];
+    const interactiveRoles = ["button", "textbox", "combobox"];
+
+    return (
+      interactiveTags.includes(target.tagName.toUpperCase()) ||
+      interactiveRoles.includes(target.getAttribute("role") || "") ||
+      target.isContentEditable ||
+      target.closest("textarea, input, button, select") !== null
+    );
+  };
+
+  const handleCanvasClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isReadOnly) return;
+    const target = e.target as HTMLElement;
+
+    // Don't create new elements if clicking on interactive elements
+    if (isInteractiveElement(target)) {
+      return;
+    }
+
+    setSelectedId(null);
     if (!activeTool || !user || !boardId) return;
 
-    const container = scrollContainerRef.current;
-    if (!container) return;
+    const { x, y } = getTouchOrMouseCoords(e.clientX, e.clientY);
 
-    const rect = container.getBoundingClientRect();
-    const scrollX = container.scrollLeft;
-    const scrollY = container.scrollTop;
-
-    const x = (e.clientX - rect.left + scrollX) / scale;
-    const y = (e.clientY - rect.top + scrollY) / scale;
-
+    setActiveTool(null);
     try {
       if (activeTool === "note") {
         await createNote(x, y);
-      } else {
+      } else if (
+        activeTool === "rectangle" ||
+        activeTool === "circle" ||
+        activeTool === "line"
+      ) {
         await createShape(activeTool, x, y);
+      } else if (activeTool === "simpleText") {
+        await createSimpleText(x, y);
+      }
+    } catch (error) {
+      console.error("Error creating element:", error);
+    }
+  };
+
+  const handleCanvasTouch = async (e: React.TouchEvent<HTMLDivElement>) => {
+    if (isReadOnly) return;
+    const target = e.target as HTMLElement;
+
+    // Don't create new elements if touching interactive elements
+    if (isInteractiveElement(target)) {
+      return;
+    }
+
+    // Only handle single touch for creating elements
+    if (e.touches.length !== 1) return;
+
+    setSelectedId(null);
+    if (!activeTool || !user || !boardId) return;
+
+    const touch = e.touches[0];
+    const { x, y } = getTouchOrMouseCoords(touch.clientX, touch.clientY);
+
+    setActiveTool(null);
+    try {
+      if (activeTool === "note") {
+        await createNote(x, y);
+      } else if (
+        activeTool === "rectangle" ||
+        activeTool === "circle" ||
+        activeTool === "line"
+      ) {
+        await createShape(activeTool, x, y);
+      } else if (activeTool === "simpleText") {
+        await createSimpleText(x, y);
       }
     } catch (error) {
       console.error("Error creating element:", error);
@@ -108,7 +190,13 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
       console.error("Error updating note:", error);
     }
   };
-
+  const handleSimpleTextUpdate = async (id: string, updates: Partial<any>) => {
+    try {
+      await updateSimpleText(id, updates);
+    } catch (error) {
+      console.error("Error updating note:", error);
+    }
+  };
   const handleShapeUpdate = async (id: string, updates: Partial<any>) => {
     try {
       await updateShape(id, updates);
@@ -125,7 +213,14 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
       console.error("Error deleting note:", error);
     }
   };
-
+  const handleDeleteSimpleText = async (id: string) => {
+    try {
+      await deleteSimpleText(id);
+      setSelectedId(null);
+    } catch (error) {
+      console.error("Error deleting note:", error);
+    }
+  };
   const handleDeleteShape = async (id: string) => {
     try {
       await deleteShape(id);
@@ -135,10 +230,53 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
     }
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't delete when typing in text inputs
+      if (isReadOnly) return;
+      if (e.target && isInteractiveElement(e.target as HTMLElement)) {
+        return;
+      }
+
+      if (e.key === "Backspace" && selectedId) {
+        if (isReadOnly) return;
+        e.preventDefault();
+
+        const noteExists = notes.find((n) => n.id === selectedId);
+        const shapeExists = shapes.find((s) => s.id === selectedId);
+        const simpleText = simpleTexts.find((s) => s.id === selectedId);
+        if (noteExists) {
+          deleteNote(selectedId);
+          setSelectedId(null);
+        } else if (shapeExists) {
+          deleteShape(selectedId);
+          setSelectedId(null);
+        } else if (simpleText) {
+          deleteSimpleText(selectedId);
+          setSelectedId(null);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    selectedId,
+    notes,
+    shapes,
+    simpleTexts,
+    deleteNote,
+    deleteShape,
+    deleteSimpleText,
+  ]);
+
   return (
     <div
       ref={scrollContainerRef}
       onClick={handleCanvasClick}
+      onTouchStart={handleCanvasTouch}
       onWheel={handleWheel}
       style={{
         width: "100%",
@@ -146,27 +284,11 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
         overflow: "auto",
         background: "#f5f5f5",
         position: "relative",
+        cursor: "grab",
+        touchAction: "pan-x pan-y pinch-zoom", 
+        pointerEvents: isReadOnly ? "none" : "auto",
       }}
     >
-      <button
-      onClick={onInvite}
-      style={{
-        position: "fixed",
-        top: "15%",             // vertically centered
-        right: "50px",          // distance from right edge
-        transform: "translateY(-50%)", // adjust for perfect centering
-        padding: "10px 20px",
-        backgroundColor: "#007bff",
-        color: "#fff",
-        border: "none",
-        borderRadius: "4px",
-        cursor: "pointer",
-        boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-        zIndex: 2000,           // stay on top of canvas
-      }}
-    >
-      Share Board
-    </button>
       <div
         style={{
           width: 3000,
@@ -213,6 +335,27 @@ const Canvas: React.FC<CanvasProps> = ({ boardId,onInvite }) => {
             onTextUpdate={(id, text) => handleShapeUpdate(id, { text })}
           />
         ))}
+        {simpleTexts.map((text) => (
+          <SimpleText
+            key={text.id}
+            {...text}
+            scale={scale}
+            selected={selectedId === text.id}
+            onSelect={(id) => setSelectedId(id)}
+            onDelete={(id) => handleDeleteSimpleText(id)}
+            onTextChange={(id, newText) =>
+              handleSimpleTextUpdate(id, { text: newText })
+            }
+            onResize={(id, w, h) =>
+              handleSimpleTextUpdate(id, { width: w, height: h })
+            }
+            onDragStop={(id, x, y) => handleSimpleTextUpdate(id, { x, y })}
+            onRotate={(id, rotation) =>
+              handleSimpleTextUpdate(id, { rotation })
+            }
+          />
+        ))}
+
         {Object.entries(cursors).map(([uid, cursorData]) => {
           if (uid === user?.uid) return null;
 

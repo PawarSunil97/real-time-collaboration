@@ -19,6 +19,13 @@ export const signInWithGoogle = async () => {
   } else {
     boardId = snapshot.val(); // All others join
   }
+
+  await set(ref(database, `users/${user.uid}`), {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || "",
+    photoURL: user.photoURL || "",
+  });
 const userRef = ref(database, `boards/${boardId}/users/${user.uid}`);
   // Add user under the board
   await set(userRef, {
